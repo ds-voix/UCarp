@@ -48,6 +48,14 @@
 # include <dmalloc.h>
 #endif
 
+// <PnD!>
+#ifdef HAVE_SYS_WAIT_H
+# include <sys/wait.h>
+// apt-get install libexplain-dev, CFLAGS+=-llibexplain
+//# include <libexplain/wait3.h>
+#endif
+// </PnD!>
+
 static void carp_set_state(struct carp_softc *sc, int state)
 {
     if ((int) sc->sc_state == state) {
@@ -65,6 +73,8 @@ static void carp_set_state(struct carp_softc *sc, int state)
         break;
     case MASTER:
         logfile(LOG_WARNING, _("Switching to state: MASTER"));
+// PnD!
+// There must be a way to vectorize DOWN over UP during non-blocking spawns!!!
         (void) spawn_handler(dev_desc_fd, upscript);
         gratuitous_arp(dev_desc_fd);
         break;
@@ -334,10 +344,14 @@ static void carp_setrun(struct carp_softc *sc, sa_family_t af)
     struct timeval tv;
 
     logfile(LOG_DEBUG, "carp_setrun()");
-    if (gettimeofday(&now, NULL) != 0) {
-        logfile(LOG_WARNING, _("initializing now to gettimeofday() failed: %s"),
+// <PnD!>
+//    if (gettimeofday(&now, NULL) != 0) {
+    if (clock_gettime(CLOCK_MONOTONIC, &nowX) != 0) {
+        logfile(LOG_WARNING, _("initializing now to clock_gettime() failed: %s"),
                 strerror(errno));
     }
+    TIMESPEC_TO_TIMEVAL(&now, &nowX);
+// </PnD!>
     switch (sc->sc_state) {
     case INIT:
         carp_set_state(sc, BACKUP);
@@ -556,7 +570,7 @@ static void packethandler(unsigned char *dummy,
 
         switch (sc.sc_state) {
         case INIT:
-            break;
+                break;
         case MASTER:
             /*
              * If we receive an advertisement from a master who's going to
@@ -566,10 +580,10 @@ static void packethandler(unsigned char *dummy,
              */
             if (timercmp(&sc_tv, &ch_tv, >) ||
                 (timercmp(&sc_tv, &ch_tv, ==) &&
-                    iphead.ip_src.s_addr < srcip.s_addr)) {
-                /* To be really sure the new master knows that is
-                 * has to reassert control of the VIP */
-                carp_send_ad(&sc);
+                 iphead.ip_src.s_addr < srcip.s_addr)) {
+        /* To be really sure the new master knows that is
+         * has to reassert control of the VIP */
+        carp_send_ad(&sc);
 
                 carp_set_state(&sc, BACKUP);
                 carp_setrun(&sc, 0);
@@ -585,13 +599,13 @@ static void packethandler(unsigned char *dummy,
              */
             if (timercmp(&sc_tv, &ch_tv, <) ||
                 (timercmp(&sc_tv, &ch_tv, ==) &&
-                    iphead.ip_src.s_addr > srcip.s_addr)) {
-                gratuitous_arp(dev_desc_fd);
-                sc.sc_delayed_arp = 2; /* and yet another in 2 ticks */
-                logfile(LOG_WARNING, _("Non-preferred master advertising: "
-                                       "reasserting control of VIP with another gratuitous arp"));
+         iphead.ip_src.s_addr > srcip.s_addr)) {
+        gratuitous_arp(dev_desc_fd);
+        sc.sc_delayed_arp = 2; /* and yet another in 2 ticks */
+        logfile(LOG_WARNING, _("Non-preferred master advertising: "
+                       "reasserting control of VIP with another gratuitous arp"));
             }
-            break;
+        break;
         case BACKUP:
             /*
              * If we're pre-empting masters who advertise slower than us,
@@ -647,6 +661,33 @@ static RETSIGTYPE sighandler_usr(const int sig)
     }
 }
 
+// <PnD!>
+/*
+// Catch SIGCHLD from async hooks. Just to kill zombies.
+static RETSIGTYPE sighandler_chld(const int sig)
+{
+//    int status;
+//    wait(&status);
+
+	int wstat;
+	pid_t	pid;
+
+	char message[3000];
+	while (1 == 1) {  //  wait3(status, options, rusage);
+		pid = wait3 (&wstat, WNOHANG, (struct rusage *)NULL );
+		if (pid == 0)
+			return;
+		else if (pid == -1)
+			return;
+		else {
+			explain_message_wait3(message, sizeof(message), &wstat, WNOHANG, (struct rusage *)NULL);
+			logfile(LOG_WARNING, "Return code: %d >> %s\n", wstat, message);
+		}
+	}
+}
+*/
+// </PnD!>
+
 static char *build_bpf_rule(void)
 {
     static char rule[256];
@@ -677,7 +718,7 @@ int docarp(void)
     struct timeval time_until_advert;
     struct sigaction usr_action;
     struct sigaction term_action;
-
+//    struct sigaction chld_action; // PnD!
     sc.sc_vhid = vhid;
     sc.sc_advbase = advbase;
     sc.sc_advskew = advskew;
@@ -778,10 +819,27 @@ int docarp(void)
         return -1;
     }
 
-    if (gettimeofday(&now, NULL) != 0) {
-        logfile(LOG_WARNING, _("initializing now to gettimeofday() failed: %s"),
+// <PnD!>
+    signal(SIGCHLD, SIG_IGN);
+/*
+    (void) sigemptyset(&chld_action.sa_mask);
+    chld_action.sa_handler = sighandler_chld;
+    chld_action.sa_flags = SA_NODEFER;
+
+    if (sigaction(SIGCHLD, &chld_action, NULL) < 0) {
+        logfile(LOG_ERR,
+           "Error when trying register SIGCHLD handler: %s",
+           strerror(errno));
+        return -1;
+    }
+*/
+//    if (gettimeofday(&now, NULL) != 0) {
+    if (clock_gettime(CLOCK_MONOTONIC, &nowX) != 0) {
+        logfile(LOG_WARNING, _("initializing now to clock_gettime() failed: %s"),
                 strerror(errno));
     }
+    TIMESPEC_TO_TIMEVAL(&now, &nowX);
+// </PnD!>
     carp_setrun(&sc, 0);
 
     if ((fd = socket(PF_INET, SOCK_DGRAM, 0)) == -1) {
@@ -814,18 +872,18 @@ int docarp(void)
             break;
         }
         if ((iface.ifr_flags & IFF_RUNNING) == 0) {
-            if (ignoreifstate == 0) {
-                carp_set_state(&sc, BACKUP);
-                sc.sc_ad_tmo.tv_sec = 0;
-                sc.sc_ad_tmo.tv_usec = 0;
-                sc.sc_md_tmo.tv_sec = 0;
-                sc.sc_md6_tmo.tv_usec = 0;
-                if (iface_running) {
-                    iface_running = 0;
-                }
-                sleep(SECONDS_TO_WAIT_AFTER_INTERFACE_IS_DOWN);
-                continue;
-            }
+        if (ignoreifstate == 0) {
+        carp_set_state(&sc, BACKUP);
+        sc.sc_ad_tmo.tv_sec = 0;
+        sc.sc_ad_tmo.tv_usec = 0;
+        sc.sc_md_tmo.tv_sec = 0;
+        sc.sc_md6_tmo.tv_usec = 0;
+            if (iface_running) {
+            iface_running = 0;
+        }
+        sleep(SECONDS_TO_WAIT_AFTER_INTERFACE_IS_DOWN);
+        continue;
+        }
         } else {
             if (!iface_running) {
                 iface_running = 1;
@@ -867,11 +925,15 @@ int docarp(void)
             unsigned int tmpskew = advskew * 1000 / 256;
             poll_sleep_time = sc.sc_advbase * 1000 + tmpskew;
         } else {
-            if (gettimeofday(&now, NULL) != 0) {
-                logfile(LOG_WARNING, _("gettimeofday() failed: %s"),
+// <PnD!>
+//            if (gettimeofday(&now, NULL) != 0) {
+            if (clock_gettime(CLOCK_MONOTONIC, &nowX) != 0) {
+                logfile(LOG_WARNING, _("clock_gettime() failed: %s"),
                         strerror(errno));
                 continue;
             }
+            TIMESPEC_TO_TIMEVAL(&now, &nowX);
+// </PnD!>
             timersub(&sc.sc_ad_tmo, &now, &time_until_advert);
             poll_sleep_time = (time_until_advert.tv_sec * 1000) +
                 (time_until_advert.tv_usec / 1000);
@@ -891,11 +953,15 @@ int docarp(void)
             }
             break;
         }
-        if (gettimeofday(&now, NULL) != 0) {
-            logfile(LOG_WARNING, _("gettimeofday() failed: %s"),
+// <PnD!>
+//        if (gettimeofday(&now, NULL) != 0) {
+        if (clock_gettime(CLOCK_MONOTONIC, &nowX) != 0) {
+            logfile(LOG_WARNING, _("clock_gettime() failed: %s"),
                     strerror(errno));
             continue;
         }
+        TIMESPEC_TO_TIMEVAL(&now, &nowX);
+// </PnD!>
         if (nfds == 1) {
             pcap_dispatch(dev_desc, 1, packethandler, NULL);
         }

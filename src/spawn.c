@@ -20,9 +20,9 @@ int spawn_handler(const int dev_desc_fd, const char * const script)
     pid = fork();
     if (pid == (pid_t) 0) {
         (void) close(dev_desc_fd);
-        execl(script, script, interface, vaddr_arg, xparam, (char *) NULL);
-        logfile(LOG_ERR, _("Unable to exec %s %s %s%s%s: %s"),
-                script, interface, vaddr_arg,
+	execl(script, script, interface, vaddr_arg, xparam, (char *) NULL);
+	logfile(LOG_ERR, _("Unable to exec %s %s %s%s%s: %s"),
+		script, interface, vaddr_arg,
                 (xparam ? " " : ""), (xparam ? xparam : ""),
                 strerror(errno));
         _exit(EXIT_FAILURE);
@@ -31,19 +31,20 @@ int spawn_handler(const int dev_desc_fd, const char * const script)
                 script, interface, vaddr_arg,
                 (xparam ? " " : ""), (xparam ? xparam : ""));
 #ifdef HAVE_WAITPID
-        {
-            while (waitpid(pid, NULL, 0) == (pid_t) -1 && errno == EINTR);
-        }
+	{
+// PnD! Don't wait!
+//	    while (waitpid(pid, NULL, 0) == (pid_t) -1 && errno == EINTR);
+	}
 #else
         {
             pid_t foundpid;
 
-            do {
-                foundpid = wait3(NULL, 0, NULL);
-                if (foundpid == (pid_t) -1 && errno == EINTR) {
-                    continue;
-                }
-            } while (foundpid != (pid_t) -1 && foundpid != pid);
+	    do {
+		foundpid = wait3(NULL, 0, NULL);
+		if (foundpid == (pid_t) -1 && errno == EINTR) {
+		    continue;
+		}
+	    } while (foundpid != (pid_t) -1 && foundpid != pid);
         }
 #endif
     } else {

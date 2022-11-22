@@ -2,6 +2,8 @@
 #define __CARP_P_H__ 1
 
 static struct carp_softc sc;
+// PnD!
+static struct timespec nowX;
 static struct timeval now;
 static pcap_t *dev_desc;
 static int dev_desc_fd = -1;
